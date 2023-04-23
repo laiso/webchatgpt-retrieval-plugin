@@ -2,7 +2,8 @@ import cheerio from 'cheerio'
 import Browser from 'webextension-polyfill'
 
 
-const BASE_URL = 'https://lite.duckduckgo.com'
+// ChatGPT Retrieval Plugin Endpoint
+const BASE_URL = 'http://localhost:3333'
 
 export interface SearchRequest {
     query: string
@@ -11,9 +12,11 @@ export interface SearchRequest {
 }
 
 export interface SearchResponse {
-    status: number
-    html: string
-    url: string
+    metadata: {
+        title: string;
+        url: string;
+    };
+    text: string;
 }
 
 export interface SearchResult {
@@ -22,33 +25,33 @@ export interface SearchResult {
     url: string
 }
 
-export async function getHtml({ query, timerange, region }: SearchRequest): Promise<SearchResponse> {
-
-    const formData = new URLSearchParams({
-        q: query.slice(0, 495), // DDG limit
-        df: timerange,
-        kl: region,
-    })
+export async function getHtml({ query, timerange, region }: SearchRequest): Promise<SearchResult[]> {
 
     const headers = {
-        'Content-Type': 'application/x-www-form-urlencoded',
-        Accept: 'text/html,application/xhtml+xml,application/xmlq=0.9,image/avif,image/webp,image/apng,*/*q=0.8,application/signed-exchangev=b3q=0.7',
-        AcceptEncoding: 'gzip, deflate, br',
-        // 'User-Agent': 'Mozilla/5.0 (Windows NT 10.0 Win64 x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/110.0.0.0 Safari/537.36',
-        // Cookie: `kl=${search.region} df=${search.timerange}`,
+        'Content-Type': 'application/json',
+        Accept: 'application/json',
     }
 
-    const response = await fetch(`${BASE_URL}/lite/`, {
+    const response = await fetch(`${BASE_URL}/query`, {
         method: 'POST',
         headers,
-        body: formData.toString(),
+        body: JSON.stringify({
+            queries: [{query}]
+        }),
     })
 
     if (!response.ok) {
         throw new Error(`Failed to fetch: ${response.status} ${response.statusText}`)
     }
 
-    return { status: response.status, html: await response.text(), url: response.url }
+    const json = await response.json();
+    return json.results[0].results.map((result: SearchResponse) => {
+        return {
+            title: result.metadata.title,
+            body: result.text,
+            url: result.metadata.url,
+        }
+    })
 }
 
 function htmlToSearchResults(html: string, numResults: number): SearchResult[] {
@@ -89,27 +92,8 @@ function htmlToSearchResults(html: string, numResults: number): SearchResult[] {
 }
 
 export async function webSearch(search: SearchRequest, numResults: number): Promise<SearchResult[]> {
-    const response: SearchResponse = await Browser.runtime.sendMessage({
+    return await Browser.runtime.sendMessage({
         type: "get_search_results",
         search
-    })
-
-    let results: SearchResult[]
-    if (response.url === `${BASE_URL}/lite/`) {
-        results = htmlToSearchResults(response.html, numResults)
-    } else {
-        const result = await Browser.runtime.sendMessage({
-            type: "get_webpage_text",
-            url: response.url,
-            html: response.html
-        })
-
-        return [{
-            title: result.title,
-            body: result.body,
-            url: response.url
-        }]
-    }
-
-    return results
+    });
 }
